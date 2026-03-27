@@ -1,0 +1,23 @@
+model_name: "Qwen/Qwen3-4B"
+display_name: "Qwen 3 — 4B"
+family: "qwen3"
+size: "4B"
+
+quantization: "4bit"
+compute_dtype: "bfloat16"
+
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+
+max_seq_length: 1536
+enable_thinking: true
