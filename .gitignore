@@ -14,7 +14,7 @@ build/
 # Training outputs (large model files)
 outputs/
 mlruns/
-
+mlflow.db
 # HuggingFace cache
 .cache/
 

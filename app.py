@@ -40,7 +40,8 @@ except ImportError:
 ROOT = Path(__file__).resolve().parent
 OUTPUTS_DIR = ROOT / "outputs"
 OUTPUTS_DIR.mkdir(exist_ok=True)
-MLRUNS_DIR = str(ROOT / "mlruns")
+_db_path = str(ROOT / "mlflow.db").replace("\\", "/")
+MLFLOW_URI = os.environ.get("MLFLOW_TRACKING_URI", f"sqlite:///{_db_path}")
 
 PRESET_MODELS = {
     "Qwen/Qwen3-4B": "Qwen 3 — 4B",
@@ -128,7 +129,7 @@ def get_mlflow_runs() -> list[dict]:
     if not MLFLOW_AVAILABLE:
         return []
     try:
-        mlflow.set_tracking_uri(MLRUNS_DIR)
+        mlflow.set_tracking_uri(MLFLOW_URI)
         experiments = mlflow.search_experiments()
         all_runs = []
         for exp in experiments:
@@ -149,7 +150,7 @@ def get_mlflow_runs() -> list[dict]:
 # ── MLflow setup ─────────────────────────────────────────────────────
 
 if MLFLOW_AVAILABLE:
-    mlflow.set_tracking_uri(MLRUNS_DIR)
+    mlflow.set_tracking_uri(MLFLOW_URI)
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -278,7 +279,12 @@ with tab_train:
         st.markdown("---")
         can_train = bool(selected_hf_id and train_path)
 
-        if st.button("Launch Training", type="primary", disabled=not can_train, use_container_width=True):
+        launch = st.button("Launch Training", type="primary", disabled=not can_train, width="stretch")
+
+    with col_progress:
+        st.subheader("Training Progress")
+
+        if launch and can_train:
             model_cfg = build_custom_model_config(
                 selected_hf_id, quantization=quant,
                 lora_r=lora_r, lora_alpha=lora_alpha, max_seq_length=max_seq,
@@ -303,135 +309,136 @@ with tab_train:
                 system_prompt=csv_sys_prompt,
             )
 
-            st.session_state["train_cfg"] = cfg
-            st.session_state["train_status"] = "running"
-            st.session_state["train_logs"] = []
+            status_box = st.status("Training in progress...", expanded=True)
+            chart_slot = st.empty()
+            metrics_slot = st.empty()
 
-            def _run():
-                try:
-                    from src.training.trainer import run_training
+            train_logs = []
+
+            try:
+                from src.training.trainer import run_training
+
+                if MLFLOW_AVAILABLE:
+                    mlflow.set_tracking_uri(MLFLOW_URI)
+                    mlflow.set_experiment(exp_name)
+                    mlflow.start_run(run_name=exp_name, tags={
+                        "model": selected_hf_id, "quantization": quant,
+                    })
+                    mlflow.log_params({
+                        "model_name": selected_hf_id, "quantization": quant,
+                        "lora_r": lora_r, "lora_alpha": lora_alpha,
+                        "epochs": epochs, "learning_rate": lr,
+                        "gradient_accumulation": grad_accum,
+                        "max_seq_length": max_seq,
+                        "adapter_stacking": adapter_path is not None,
+                        "train_file": Path(train_path).name,
+                    })
+
+                def on_log(entry):
+                    train_logs.append(entry)
                     if MLFLOW_AVAILABLE:
-                        mlflow.set_tracking_uri(MLRUNS_DIR)
-                        mlflow.set_experiment(exp_name)
-                        mlflow.start_run(run_name=exp_name, tags={
-                            "model": selected_hf_id, "quantization": quant,
-                        })
-                        mlflow.log_params({
-                            "model_name": selected_hf_id, "quantization": quant,
-                            "lora_r": lora_r, "lora_alpha": lora_alpha,
-                            "epochs": epochs, "learning_rate": lr,
-                            "gradient_accumulation": grad_accum,
-                            "max_seq_length": max_seq,
-                            "adapter_stacking": adapter_path is not None,
-                            "train_file": Path(train_path).name,
-                        })
+                        step = entry.get("step", 0)
+                        m = {}
+                        if "loss" in entry:
+                            m["train_loss"] = entry["loss"]
+                        if "lr" in entry:
+                            m["learning_rate"] = entry["lr"]
+                        if "eval_loss" in entry:
+                            m["eval_loss"] = entry["eval_loss"]
+                        if m:
+                            mlflow.log_metrics(m, step=step)
 
-                    def on_log(entry):
-                        st.session_state["train_logs"].append(entry)
-                        if MLFLOW_AVAILABLE:
-                            step = entry.get("step", 0)
-                            m = {}
-                            if "loss" in entry:
-                                m["train_loss"] = entry["loss"]
-                            if "lr" in entry:
-                                m["learning_rate"] = entry["lr"]
-                            if "eval_loss" in entry:
-                                m["eval_loss"] = entry["eval_loss"]
-                            if m:
-                                mlflow.log_metrics(m, step=step)
+                    losses = [l for l in train_logs if "loss" in l]
+                    evals = [l for l in train_logs if "eval_loss" in l]
+                    if losses:
+                        fig = go.Figure()
+                        fig.add_trace(go.Scatter(
+                            x=[l["step"] for l in losses], y=[l["loss"] for l in losses],
+                            mode="lines+markers", name="Train Loss", line=dict(color="#4FC3F7")))
+                        if evals:
+                            fig.add_trace(go.Scatter(
+                                x=[l["step"] for l in evals], y=[l["eval_loss"] for l in evals],
+                                mode="lines+markers", name="Eval Loss", line=dict(color="#FF7043")))
+                        fig.update_layout(title="Loss Curve (live)", template="plotly_dark", height=300,
+                                          margin=dict(l=40, r=20, t=40, b=30))
+                        chart_slot.plotly_chart(fig, width="stretch")
 
-                    summary = run_training(cfg, on_log=on_log)
-
-                    if MLFLOW_AVAILABLE:
-                        metrics = {}
-                        if summary.get("final_train_loss") is not None:
-                            metrics["final_train_loss"] = summary["final_train_loss"]
-                        if summary.get("best_eval_loss") is not None:
-                            metrics["best_eval_loss"] = summary["best_eval_loss"]
-                        if summary.get("total_time_s"):
-                            metrics["training_time_s"] = summary["total_time_s"]
-                        if summary.get("trainable_params"):
-                            metrics["trainable_params"] = summary["trainable_params"]
-                        if metrics:
-                            mlflow.log_metrics(metrics)
-                        ap = summary.get("adapter_path", "")
-                        if ap and os.path.isdir(ap):
-                            mlflow.log_artifacts(ap, "adapter")
-                        loss_log = os.path.join(cfg.output_dir, "loss_log.json")
-                        if os.path.exists(loss_log):
-                            mlflow.log_artifact(loss_log)
-                        mlflow.end_run()
-
-                    st.session_state["train_status"] = "done"
-                    st.session_state["train_summary"] = summary
-                except Exception as exc:
-                    if MLFLOW_AVAILABLE:
+                    last = losses[-1] if losses else {}
+                    with metrics_slot.container():
+                        c1, c2, c3 = st.columns(3)
+                        c1.metric("Step", last.get("step", 0))
+                        c2.metric("Loss", f"{last.get('loss', 0):.4f}")
+                        gpu_str = ""
                         try:
-                            mlflow.end_run(status="FAILED")
+                            import torch as _t
+                            if _t.cuda.is_available():
+                                mem = _t.cuda.memory_allocated() / 1024**3
+                                tot = _t.cuda.get_device_properties(0).total_memory / 1024**3
+                                gpu_str = f"{mem:.1f}/{tot:.1f} GB"
                         except Exception:
                             pass
-                    st.session_state["train_status"] = "error"
-                    st.session_state["train_error"] = str(exc)
+                        c3.metric("GPU", gpu_str or "N/A")
 
-            threading.Thread(target=_run, daemon=True).start()
+                    status_box.update(label=f"Step {last.get('step', 0)} — loss {last.get('loss', 0):.4f}")
 
-    with col_progress:
-        st.subheader("Training Progress")
-        status = st.session_state.get("train_status")
+                summary = run_training(cfg, on_log=on_log)
 
-        if status == "running":
-            st.markdown('<span class="status-running">Training in progress...</span>', unsafe_allow_html=True)
-            logs = st.session_state.get("train_logs", [])
-            if logs:
-                losses = [l for l in logs if "loss" in l]
-                evals = [l for l in logs if "eval_loss" in l]
-                if losses:
-                    fig = go.Figure()
-                    fig.add_trace(go.Scatter(x=[l["step"] for l in losses], y=[l["loss"] for l in losses],
-                                            mode="lines+markers", name="Train Loss", line=dict(color="#4FC3F7")))
-                    if evals:
-                        fig.add_trace(go.Scatter(x=[l["step"] for l in evals], y=[l["eval_loss"] for l in evals],
-                                                 mode="lines+markers", name="Eval Loss", line=dict(color="#FF7043")))
-                    fig.update_layout(title="Loss Curve", template="plotly_dark", height=350)
-                    st.plotly_chart(fig, use_container_width=True)
-                last = losses[-1] if losses else {}
+                if MLFLOW_AVAILABLE:
+                    metrics = {}
+                    if summary.get("final_train_loss") is not None:
+                        metrics["final_train_loss"] = summary["final_train_loss"]
+                    if summary.get("best_eval_loss") is not None:
+                        metrics["best_eval_loss"] = summary["best_eval_loss"]
+                    if summary.get("total_time_s"):
+                        metrics["training_time_s"] = summary["total_time_s"]
+                    if summary.get("trainable_params"):
+                        metrics["trainable_params"] = summary["trainable_params"]
+                    if metrics:
+                        mlflow.log_metrics(metrics)
+                    ap = summary.get("adapter_path", "")
+                    if ap and os.path.isdir(ap):
+                        mlflow.log_artifacts(ap, "adapter")
+                    loss_log = os.path.join(cfg.output_dir, "loss_log.json")
+                    if os.path.exists(loss_log):
+                        mlflow.log_artifact(loss_log)
+                    mlflow.end_run()
+
+                status_box.update(label="Training complete!", state="complete", expanded=True)
+
+                st.balloons()
                 c1, c2, c3 = st.columns(3)
-                c1.metric("Step", last.get("step", 0))
-                c2.metric("Loss", f"{last.get('loss', 0):.4f}")
-                c3.metric("ETA", f"{last.get('eta_s', 0) // 60:.0f}m")
-            st.info("Refresh to see latest progress.")
+                fl = summary.get("final_train_loss") or 0
+                el = summary.get("best_eval_loss") or 0
+                time_s = summary.get("total_time_s") or 0
+                c1.metric("Final Loss", f"{fl:.4f}")
+                c2.metric("Best Eval", f"{el:.4f}")
+                c3.metric("Duration", f"{time_s // 60:.0f}m {time_s % 60:.0f}s")
+                st.success(f"Adapter saved to: `{summary.get('adapter_path', '')}`")
+                st.info("Go to the **Chat** tab to talk to your fine-tuned model!")
 
-        elif status == "done":
-            st.markdown('<span class="status-done">Training complete!</span>', unsafe_allow_html=True)
+                st.session_state["train_status"] = "done"
+                st.session_state["train_summary"] = summary
+
+            except Exception as exc:
+                if MLFLOW_AVAILABLE:
+                    try:
+                        mlflow.end_run(status="FAILED")
+                    except Exception:
+                        pass
+                status_box.update(label="Training failed", state="error")
+                st.error(f"Error: {exc}")
+
+        elif st.session_state.get("train_status") == "done":
             s = st.session_state.get("train_summary", {})
+            st.markdown('<span class="status-done">Last training completed!</span>', unsafe_allow_html=True)
             c1, c2, c3 = st.columns(3)
-            c1.metric("Final Loss", f"{s.get('final_train_loss', 0):.4f}")
-            c2.metric("Best Eval", f"{s.get('best_eval_loss', 0):.4f}")
-            c3.metric("Duration", f"{s.get('total_time_s', 0) // 60:.0f}m")
-            st.success(f"Adapter saved: `{s.get('adapter_path', '')}`")
-            st.info("Go to the **Chat** tab to talk to your fine-tuned model!")
-
-            tcfg = st.session_state.get("train_cfg")
-            if tcfg:
-                lp = os.path.join(tcfg.output_dir, "loss_log.json")
-                if os.path.exists(lp):
-                    with open(lp) as f:
-                        ld = json.load(f)
-                    fig = go.Figure()
-                    tl = ld.get("train_losses", [])
-                    el = ld.get("eval_losses", [])
-                    if tl:
-                        fig.add_trace(go.Scatter(x=[l["step"] for l in tl], y=[l["loss"] for l in tl],
-                                                 name="Train", line=dict(color="#4FC3F7")))
-                    if el:
-                        fig.add_trace(go.Scatter(x=[l["step"] for l in el], y=[l["eval_loss"] for l in el],
-                                                 name="Eval", line=dict(color="#FF7043")))
-                    fig.update_layout(title="Final Loss Curve", template="plotly_dark", height=350)
-                    st.plotly_chart(fig, use_container_width=True)
-
-        elif status == "error":
-            st.markdown('<span class="status-error">Training failed</span>', unsafe_allow_html=True)
-            st.error(st.session_state.get("train_error", "Unknown error"))
+            fl = s.get("final_train_loss") or 0
+            el = s.get("best_eval_loss") or 0
+            time_s = s.get("total_time_s") or 0
+            c1.metric("Final Loss", f"{fl:.4f}")
+            c2.metric("Best Eval", f"{el:.4f}")
+            c3.metric("Duration", f"{time_s // 60:.0f}m {time_s % 60:.0f}s")
+            st.success(f"Adapter: `{s.get('adapter_path', '')}`")
         else:
             st.info("Configure training on the left and click **Launch Training**.")
 
@@ -472,7 +479,7 @@ with tab_eval:
                                        placeholder="System prompt for eval (optional)")
 
         can_eval = bool(eval_adapter_path and test_path and eval_model_id)
-        if st.button("Run Evaluation", type="primary", disabled=not can_eval, use_container_width=True):
+        if st.button("Run Evaluation", type="primary", disabled=not can_eval, width="stretch"):
             with st.spinner("Evaluating..."):
                 try:
                     from src.evaluation.harness import run_evaluation
@@ -488,6 +495,7 @@ with tab_eval:
                     st.session_state["eval_results"] = results
 
                     if MLFLOW_AVAILABLE:
+                        mlflow.set_tracking_uri(MLFLOW_URI)
                         mlflow.set_experiment("evaluations")
                         mlflow.start_run(run_name=f"eval_{Path(eval_adapter_path).parent.name}")
                         mlflow.log_metrics({
@@ -516,7 +524,7 @@ with tab_eval:
                              color_continuous_scale=["#EF5350", "#FFD54F", "#66BB6A"], range_color=[0, 100],
                              labels={"x": "Scenario", "y": "Accuracy %"}, title="Per-Scenario Accuracy")
                 fig.update_layout(template="plotly_dark", height=350, showlegend=False)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
 
                 with st.expander("Details"):
                     for sc in scenarios:
@@ -582,7 +590,7 @@ with tab_chat:
             if "best_eval_loss" in chat_adapter:
                 st.markdown(f"**Best Eval:** {chat_adapter['best_eval_loss']:.4f}")
 
-            if st.button("Load Model", type="primary", use_container_width=True, key="chat_load"):
+            if st.button("Load Model", type="primary", width="stretch", key="chat_load"):
                 st.session_state["chat_load_request"] = {
                     "model_id": chat_model_id,
                     "adapter_path": chat_adapter["path"],
@@ -590,7 +598,7 @@ with tab_chat:
                 }
                 st.session_state["chat_messages"] = []
 
-            if st.button("Clear Chat", use_container_width=True, key="chat_clear"):
+            if st.button("Clear Chat", width="stretch", key="chat_clear"):
                 st.session_state["chat_messages"] = []
                 st.rerun()
 
@@ -732,7 +740,7 @@ with tab_experiments:
                     row["Time"] = f"{run['metrics.training_time_s'] / 60:.0f}m"
                 display.append(row)
 
-            st.dataframe(display, use_container_width=True)
+            st.dataframe(display, width="stretch")
 
             loss_runs = [r for r in runs
                          if "metrics.final_train_loss" in r
@@ -746,7 +754,7 @@ with tab_experiments:
                     color_discrete_sequence=["#4FC3F7"],
                 )
                 fig.update_layout(template="plotly_dark", height=350)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
 
             st.subheader("Run Details")
             sel_name = st.selectbox("Select Run",
