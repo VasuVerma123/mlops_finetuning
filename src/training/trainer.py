@@ -63,6 +63,73 @@ def load_base_model(cfg: PipelineConfig):
     return model, tokenizer
 
 
+def _compute_generation_accuracy(model, tokenizer, cfg, val_ds, max_samples=10):
+    """Generate on val examples and score how well the model reproduces expected outputs."""
+    import re, json as _json
+    try:
+        raw_file = cfg.val_file if cfg.val_file else cfg.train_file
+        if not raw_file:
+            return None
+        with open(raw_file, "r", encoding="utf-8") as f:
+            raw = [_json.loads(line) for line in f if line.strip()]
+        if not raw:
+            return None
+
+        raw = raw[:max_samples]
+        model.eval()
+        correct = 0
+        total = 0
+
+        for ex in raw:
+            msgs = ex.get("messages", [])
+            if len(msgs) < 2:
+                continue
+
+            expected_msg = next((m for m in reversed(msgs) if m["role"] == "assistant"), None)
+            if not expected_msg:
+                continue
+            expected = expected_msg["content"]
+
+            prompt_msgs = [m for m in msgs if m["role"] != "assistant"]
+            try:
+                prompt = tokenizer.apply_chat_template(
+                    prompt_msgs, tokenize=False,
+                    add_generation_prompt=True, enable_thinking=cfg.model.enable_thinking)
+            except TypeError:
+                prompt = tokenizer.apply_chat_template(
+                    prompt_msgs, tokenize=False, add_generation_prompt=True)
+
+            inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+            with torch.no_grad():
+                out = model.generate(**inputs, max_new_tokens=400,
+                                     temperature=0.3, do_sample=True, top_p=0.9)
+            resp = tokenizer.decode(out[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True)
+            del inputs, out
+
+            has_tool_expected = "<tool_call>" in expected
+            has_tool_generated = "<tool_call>" in resp
+
+            if has_tool_expected:
+                tool_match = re.search(r'"name"\s*:\s*"(\w+)"', expected)
+                gen_match = re.search(r'"name"\s*:\s*"(\w+)"', resp)
+                if tool_match and gen_match and tool_match.group(1) == gen_match.group(1):
+                    correct += 1
+                elif not has_tool_generated and not has_tool_expected:
+                    correct += 1
+            else:
+                if not has_tool_generated:
+                    correct += 1
+
+            total += 1
+
+        torch.cuda.empty_cache()
+        if total == 0:
+            return None
+        return round(correct / total * 100, 1)
+    except Exception:
+        return None
+
+
 def run_training(
     cfg: PipelineConfig,
     on_log: Optional[Callable] = None,
@@ -105,8 +172,13 @@ def run_training(
     eff_batch = tc.batch_size * tc.gradient_accumulation
     steps_per_epoch = max(1, len(train_ds) // eff_batch)
     total_steps = steps_per_epoch * tc.epochs
-    warmup_steps = max(10, int(total_steps * tc.warmup_ratio))
-    eval_steps = max(total_steps // 10, 30)
+
+    warmup_steps = min(max(1, int(total_steps * tc.warmup_ratio)), total_steps // 3)
+    eval_steps = max(1, min(total_steps // 4, 30))
+    log_every = max(1, min(tc.logging_steps, total_steps // 3))
+
+    print(f"[SCHEDULE] steps/epoch={steps_per_epoch} total={total_steps} "
+          f"log_every={log_every} eval_every={eval_steps} warmup={warmup_steps}")
 
     bf16_ok = torch.cuda.is_bf16_supported() if torch.cuda.is_available() else False
 
@@ -128,7 +200,7 @@ def run_training(
         packing=False,
         bf16=bf16_ok,
         fp16=not bf16_ok,
-        logging_steps=tc.logging_steps,
+        logging_steps=log_every,
         eval_strategy="steps",
         eval_steps=eval_steps,
         save_strategy="steps",
@@ -165,6 +237,23 @@ def run_training(
     trainer.save_model(final_dir)
     tokenizer.save_pretrained(final_dir)
 
+    # ── Auto-eval on validation set ──
+    import math
+    eval_metrics = {}
+    try:
+        eval_result = trainer.evaluate()
+        eval_loss = eval_result.get("eval_loss")
+        if eval_loss is not None:
+            eval_metrics["eval_loss"] = round(eval_loss, 4)
+            eval_metrics["perplexity"] = round(math.exp(min(eval_loss, 20)), 2)
+    except Exception:
+        pass
+
+    # Quick generation accuracy: generate on val examples and check quality
+    val_accuracy = _compute_generation_accuracy(model, tokenizer, cfg, val_ds)
+    if val_accuracy is not None:
+        eval_metrics["val_accuracy_pct"] = val_accuracy
+
     summary = logger.get_summary()
     summary.update({
         "adapter_path": final_dir,
@@ -174,6 +263,7 @@ def run_training(
         "token_stats": token_stats,
         "trainable_params": trainable,
         "total_params": total_params,
+        **eval_metrics,
     })
 
     if on_complete:

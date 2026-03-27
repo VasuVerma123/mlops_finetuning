@@ -129,6 +129,7 @@ def get_mlflow_runs() -> list[dict]:
     if not MLFLOW_AVAILABLE:
         return []
     try:
+        import math
         mlflow.set_tracking_uri(MLFLOW_URI)
         experiments = mlflow.search_experiments()
         all_runs = []
@@ -141,7 +142,14 @@ def get_mlflow_runs() -> list[dict]:
             )
             if len(runs) > 0:
                 for _, run in runs.iterrows():
-                    all_runs.append(run.to_dict())
+                    d = run.to_dict()
+                    cleaned = {}
+                    for k, v in d.items():
+                        if isinstance(v, float) and math.isnan(v):
+                            cleaned[k] = None
+                        else:
+                            cleaned[k] = v
+                    all_runs.append(cleaned)
         return all_runs
     except Exception:
         return []
@@ -275,7 +283,27 @@ with tab_train:
                         "8bit": "8-bit quantization + LoRA",
                         "none": "Full precision LoRA (needs lots of VRAM)"}[quant])
 
-        # Step 5: Launch
+        # Step 5: Test Cases (optional — for auto-eval after training)
+        st.markdown("---")
+        st.subheader("Step 5: Test Cases (optional)")
+        st.caption("Upload test cases to automatically evaluate accuracy after fine-tuning.")
+        test_upload_train = st.file_uploader("Test Cases JSONL", type=["jsonl", "json"], key="t_test")
+        test_path_train = ""
+        if test_upload_train:
+            test_path_train = save_uploaded(test_upload_train, upload_dir)
+            r = validate_test_cases(test_path_train)
+            if r["valid"]:
+                st.success(f"{r['total']} test cases — will auto-evaluate after training")
+            else:
+                for e in r["errors"][:3]:
+                    st.error(e)
+                test_path_train = ""
+
+        eval_sys_prompt_train = ""
+        if test_path_train:
+            eval_sys_prompt_train = st.text_area("Eval System Prompt (optional)", height=60, key="t_eval_sysp")
+
+        # Step 6: Launch
         st.markdown("---")
         can_train = bool(selected_hf_id and train_path)
 
@@ -383,16 +411,49 @@ with tab_train:
 
                 summary = run_training(cfg, on_log=on_log)
 
+                # ── Auto-evaluate if test cases provided ──
+                eval_results = None
+                if test_path_train:
+                    status_box.update(label="Evaluating on test cases...", state="running")
+                    try:
+                        from src.evaluation.harness import run_evaluation
+                        eval_cfg = PipelineConfig(
+                            model=model_cfg,
+                            training=TrainingConfig(**train_data),
+                            evaluation=EvalConfig(**eval_data),
+                            output_dir=str(OUTPUTS_DIR / exp_name),
+                            test_file=test_path_train,
+                        )
+                        eval_results = run_evaluation(
+                            eval_cfg, summary.get("adapter_path", ""),
+                            test_file=test_path_train,
+                            system_prompt=eval_sys_prompt_train,
+                        )
+                        summary["eval_results"] = eval_results
+                    except Exception as eval_exc:
+                        st.warning(f"Auto-evaluation failed: {eval_exc}")
+
                 if MLFLOW_AVAILABLE:
                     metrics = {}
                     if summary.get("final_train_loss") is not None:
                         metrics["final_train_loss"] = summary["final_train_loss"]
                     if summary.get("best_eval_loss") is not None:
                         metrics["best_eval_loss"] = summary["best_eval_loss"]
+                    if summary.get("eval_loss") is not None:
+                        metrics["eval_loss"] = summary["eval_loss"]
+                    if summary.get("perplexity") is not None:
+                        metrics["perplexity"] = summary["perplexity"]
+                    if summary.get("val_accuracy_pct") is not None:
+                        metrics["accuracy_pct"] = summary["val_accuracy_pct"]
                     if summary.get("total_time_s"):
                         metrics["training_time_s"] = summary["total_time_s"]
                     if summary.get("trainable_params"):
                         metrics["trainable_params"] = summary["trainable_params"]
+                    if eval_results:
+                        metrics["accuracy_pct"] = eval_results.get("overall_accuracy_pct", 0)
+                        metrics["avg_latency_s"] = eval_results.get("avg_latency_s", 0)
+                        metrics["avg_tokens_per_sec"] = eval_results.get("avg_tokens_per_sec", 0)
+                        metrics["ttft_s"] = eval_results.get("avg_ttft_s", 0)
                     if metrics:
                         mlflow.log_metrics(metrics)
                     ap = summary.get("adapter_path", "")
@@ -406,13 +467,31 @@ with tab_train:
                 status_box.update(label="Training complete!", state="complete", expanded=True)
 
                 st.balloons()
-                c1, c2, c3 = st.columns(3)
                 fl = summary.get("final_train_loss") or 0
-                el = summary.get("best_eval_loss") or 0
+                el = summary.get("best_eval_loss") or summary.get("eval_loss") or 0
+                ppl = summary.get("perplexity") or 0
+                val_acc = summary.get("val_accuracy_pct")
                 time_s = summary.get("total_time_s") or 0
-                c1.metric("Final Loss", f"{fl:.4f}")
-                c2.metric("Best Eval", f"{el:.4f}")
-                c3.metric("Duration", f"{time_s // 60:.0f}m {time_s % 60:.0f}s")
+
+                if eval_results:
+                    acc = eval_results.get("overall_accuracy_pct", 0)
+                    c1, c2, c3, c4, c5 = st.columns(5)
+                    c1.metric("Train Loss", f"{fl:.4f}")
+                    c2.metric("Eval Loss", f"{el:.4f}")
+                    c3.metric("Accuracy", f"{acc:.1f}%")
+                    c4.metric("Perplexity", f"{ppl:.1f}")
+                    c5.metric("Duration", f"{time_s // 60:.0f}m {time_s % 60:.0f}s")
+                    lat = eval_results.get("avg_latency_s", 0)
+                    tps = eval_results.get("avg_tokens_per_sec", 0)
+                    st.info(f"Latency: {lat:.2f}s | Tokens/sec: {tps:.1f}")
+                else:
+                    c1, c2, c3, c4, c5 = st.columns(5)
+                    c1.metric("Train Loss", f"{fl:.4f}")
+                    c2.metric("Eval Loss", f"{el:.4f}")
+                    c3.metric("Accuracy", f"{val_acc:.1f}%" if val_acc is not None else "—")
+                    c4.metric("Perplexity", f"{ppl:.1f}" if ppl else "—")
+                    c5.metric("Duration", f"{time_s // 60:.0f}m {time_s % 60:.0f}s")
+
                 st.success(f"Adapter saved to: `{summary.get('adapter_path', '')}`")
                 st.info("Go to the **Chat** tab to talk to your fine-tuned model!")
 
@@ -714,67 +793,221 @@ with tab_chat:
 # ═════════════════════════════════════════════════════════════════════
 
 with tab_experiments:
-    st.header("Experiment History (MLflow)")
-
     if not MLFLOW_AVAILABLE:
         st.warning("MLflow not installed.")
     else:
         runs = get_mlflow_runs()
-        if runs:
-            st.subheader(f"{len(runs)} Runs")
+        if not runs:
+            st.info("No experiments yet. Train a model to see history here.")
+        else:
+            # ── Overview metrics across all runs ──
+            finished = [r for r in runs if r.get("status") == "FINISHED"]
+            best_loss = None
+            best_acc = None
+            for r in finished:
+                fl = r.get("metrics.final_train_loss")
+                if fl is not None and (best_loss is None or fl < best_loss):
+                    best_loss = fl
+                ac = r.get("metrics.accuracy_pct") or r.get("metrics.overall_accuracy_pct")
+                if ac is not None and (best_acc is None or ac > best_acc):
+                    best_acc = ac
 
+            st.markdown("### Overview")
+            ov1, ov2, ov3, ov4 = st.columns(4)
+            ov1.metric("Total Runs", len(runs))
+            ov2.metric("Finished", len(finished))
+            ov3.metric("Best Loss", f"{best_loss:.4f}" if best_loss is not None else "—")
+            ov4.metric("Best Accuracy", f"{best_acc:.1f}%" if best_acc is not None else "—")
+
+            st.markdown("---")
+
+            # ── Runs table ──
+            st.markdown("### All Runs")
             display = []
             for run in runs:
-                row = {
+                fl = run.get("metrics.final_train_loss")
+                el = run.get("metrics.eval_loss") or run.get("metrics.best_eval_loss")
+                ppl = run.get("metrics.perplexity")
+                ac = run.get("metrics.accuracy_pct") or run.get("metrics.overall_accuracy_pct")
+                lat = run.get("metrics.avg_latency_s")
+                tps = run.get("metrics.avg_tokens_per_sec")
+                ttft = run.get("metrics.ttft_s")
+                ts = run.get("metrics.training_time_s")
+                tp = run.get("metrics.trainable_params")
+
+                display.append({
                     "Run": run.get("tags.mlflow.runName", "?"),
                     "Status": run.get("status", "?"),
                     "Model": run.get("params.model_name", run.get("tags.model", "?")),
-                }
-                if "metrics.final_train_loss" in run and run["metrics.final_train_loss"] is not None:
-                    row["Final Loss"] = f"{run['metrics.final_train_loss']:.4f}"
-                if "metrics.best_eval_loss" in run and run["metrics.best_eval_loss"] is not None:
-                    row["Best Eval"] = f"{run['metrics.best_eval_loss']:.4f}"
-                if "metrics.overall_accuracy_pct" in run and run["metrics.overall_accuracy_pct"] is not None:
-                    row["Accuracy"] = f"{run['metrics.overall_accuracy_pct']:.1f}%"
-                if "metrics.training_time_s" in run and run["metrics.training_time_s"] is not None:
-                    row["Time"] = f"{run['metrics.training_time_s'] / 60:.0f}m"
-                display.append(row)
+                    "Train Loss": f"{fl:.4f}" if fl is not None else "—",
+                    "Eval Loss": f"{el:.4f}" if el is not None else "—",
+                    "Perplexity": f"{ppl:.2f}" if ppl is not None else "—",
+                    "Accuracy": f"{ac:.1f}%" if ac is not None else "—",
+                    "Latency": f"{lat:.2f}s" if lat is not None else "—",
+                    "Tok/s": f"{tps:.1f}" if tps is not None else "—",
+                    "TTFT": f"{ttft:.3f}s" if ttft is not None else "—",
+                    "Duration": f"{ts / 60:.0f}m" if ts is not None else "—",
+                    "Params": f"{tp / 1e6:.1f}M" if tp is not None else "—",
+                })
 
-            st.dataframe(display, width="stretch")
+            st.dataframe(display, width="stretch", hide_index=True)
 
-            loss_runs = [r for r in runs
-                         if "metrics.final_train_loss" in r
-                         and r.get("metrics.final_train_loss") is not None]
-            if loss_runs:
-                fig = px.bar(
-                    x=[r.get("tags.mlflow.runName", "?") for r in loss_runs],
-                    y=[r["metrics.final_train_loss"] for r in loss_runs],
-                    labels={"x": "Run", "y": "Final Train Loss"},
-                    title="Training Loss Comparison",
-                    color_discrete_sequence=["#4FC3F7"],
-                )
-                fig.update_layout(template="plotly_dark", height=350)
-                st.plotly_chart(fig, width="stretch")
+            st.markdown("---")
 
-            st.subheader("Run Details")
-            sel_name = st.selectbox("Select Run",
-                                    [r.get("tags.mlflow.runName", r.get("run_id", "?")) for r in runs],
-                                    key="exp_sel")
+            # ── Comparison charts ──
+            st.markdown("### Compare Runs")
+            chart_col1, chart_col2 = st.columns(2)
+
+            named_finished = [r for r in finished if r.get("metrics.final_train_loss") is not None]
+
+            with chart_col1:
+                if named_finished:
+                    names = [r.get("tags.mlflow.runName", "?") for r in named_finished]
+                    losses = [r["metrics.final_train_loss"] for r in named_finished]
+                    colors = ["#EF5350" if l == max(losses) else "#66BB6A" if l == min(losses) else "#4FC3F7" for l in losses]
+                    fig = go.Figure(go.Bar(x=names, y=losses, marker_color=colors, text=[f"{l:.4f}" for l in losses], textposition="outside"))
+                    fig.update_layout(title="Train Loss (lower is better)", template="plotly_dark",
+                                      height=320, yaxis_title="Loss", margin=dict(t=40, b=30))
+                    st.plotly_chart(fig, width="stretch")
+                else:
+                    st.caption("No loss data yet.")
+
+            with chart_col2:
+                acc_runs = [r for r in finished if (r.get("metrics.accuracy_pct") or r.get("metrics.overall_accuracy_pct")) is not None]
+                if acc_runs:
+                    names = [r.get("tags.mlflow.runName", "?") for r in acc_runs]
+                    accs = [r.get("metrics.accuracy_pct") or r.get("metrics.overall_accuracy_pct") for r in acc_runs]
+                    colors = ["#66BB6A" if a == max(accs) else "#EF5350" if a == min(accs) else "#4FC3F7" for a in accs]
+                    fig = go.Figure(go.Bar(x=names, y=accs, marker_color=colors, text=[f"{a:.1f}%" for a in accs], textposition="outside"))
+                    fig.update_layout(title="Accuracy (higher is better)", template="plotly_dark",
+                                      height=320, yaxis_title="Accuracy %", yaxis_range=[0, 105],
+                                      margin=dict(t=40, b=30))
+                    st.plotly_chart(fig, width="stretch")
+                else:
+                    st.caption("No accuracy data yet. Upload test cases during training to get accuracy.")
+
+            # Extra charts row: eval loss + latency
+            chart_col3, chart_col4 = st.columns(2)
+
+            with chart_col3:
+                eval_runs = [r for r in finished if r.get("metrics.best_eval_loss") is not None]
+                if eval_runs:
+                    names = [r.get("tags.mlflow.runName", "?") for r in eval_runs]
+                    evals = [r["metrics.best_eval_loss"] for r in eval_runs]
+                    fig = go.Figure(go.Bar(x=names, y=evals, marker_color="#FF7043",
+                                          text=[f"{e:.4f}" for e in evals], textposition="outside"))
+                    fig.update_layout(title="Best Eval Loss", template="plotly_dark",
+                                      height=320, yaxis_title="Eval Loss", margin=dict(t=40, b=30))
+                    st.plotly_chart(fig, width="stretch")
+
+            with chart_col4:
+                lat_runs = [r for r in finished if r.get("metrics.avg_latency_s") is not None]
+                if lat_runs:
+                    names = [r.get("tags.mlflow.runName", "?") for r in lat_runs]
+                    lats = [r["metrics.avg_latency_s"] for r in lat_runs]
+                    fig = go.Figure(go.Bar(x=names, y=lats, marker_color="#AB47BC",
+                                          text=[f"{l:.2f}s" for l in lats], textposition="outside"))
+                    fig.update_layout(title="Avg Latency", template="plotly_dark",
+                                      height=320, yaxis_title="Seconds", margin=dict(t=40, b=30))
+                    st.plotly_chart(fig, width="stretch")
+
+            st.markdown("---")
+
+            # ── Run details (MLflow-style) ──
+            st.markdown("### Run Details")
+            run_names = [r.get("tags.mlflow.runName", r.get("run_id", "?")) for r in runs]
+            sel_name = st.selectbox("Select Run", run_names, key="exp_sel")
             sel_run = next((r for r in runs if r.get("tags.mlflow.runName") == sel_name), None)
+
             if sel_run:
-                cp, cm = st.columns(2)
-                with cp:
-                    st.markdown("**Parameters**")
-                    params = {k.replace("params.", ""): v for k, v in sel_run.items()
-                              if k.startswith("params.") and v is not None}
-                    st.json(params)
-                with cm:
-                    st.markdown("**Metrics**")
-                    metrics = {k.replace("metrics.", ""): v for k, v in sel_run.items()
-                               if k.startswith("metrics.") and v is not None}
-                    st.json(metrics)
-        else:
-            st.info("No experiments yet. Train a model to see history here.")
+                status = sel_run.get("status", "?")
+                status_color = "#66BB6A" if status == "FINISHED" else "#FFD54F" if status == "RUNNING" else "#EF5350"
+                st.markdown(f'<span style="color:{status_color}; font-weight:700; font-size:1.1em;">{status}</span>',
+                            unsafe_allow_html=True)
+
+                # Key metrics as big cards
+                params = {k.replace("params.", ""): v for k, v in sel_run.items()
+                          if k.startswith("params.") and v is not None}
+                metrics = {k.replace("metrics.", ""): v for k, v in sel_run.items()
+                           if k.startswith("metrics.") and v is not None}
+
+                if metrics:
+                    st.markdown("#### Metrics")
+                    metric_keys = list(metrics.keys())
+                    cols = st.columns(min(len(metric_keys), 5))
+                    for i, key in enumerate(metric_keys):
+                        val = metrics[key]
+                        if isinstance(val, float):
+                            if "pct" in key or "accuracy" in key:
+                                formatted = f"{val:.1f}%"
+                            elif "loss" in key:
+                                formatted = f"{val:.4f}"
+                            elif "time" in key or "latency" in key or "ttft" in key:
+                                formatted = f"{val:.2f}s"
+                            elif "params" in key:
+                                formatted = f"{val / 1e6:.1f}M"
+                            else:
+                                formatted = f"{val:.2f}"
+                        else:
+                            formatted = str(val)
+                        label = key.replace("_", " ").title()
+                        cols[i % len(cols)].metric(label, formatted)
+
+                # Loss curve from saved log file
+                exp_name_sel = sel_run.get("tags.mlflow.runName", "")
+                loss_log_path = OUTPUTS_DIR / exp_name_sel / "loss_log.json"
+                if loss_log_path.exists():
+                    st.markdown("#### Loss Curve")
+                    try:
+                        ld = json.loads(loss_log_path.read_text())
+                        tl = ld.get("train_losses", [])
+                        el = ld.get("eval_losses", [])
+                        if tl or el:
+                            fig = go.Figure()
+                            if tl:
+                                fig.add_trace(go.Scatter(
+                                    x=[l["step"] for l in tl], y=[l["loss"] for l in tl],
+                                    mode="lines+markers", name="Train Loss",
+                                    line=dict(color="#4FC3F7", width=2)))
+                            if el:
+                                fig.add_trace(go.Scatter(
+                                    x=[l["step"] for l in el], y=[l["eval_loss"] for l in el],
+                                    mode="lines+markers", name="Eval Loss",
+                                    line=dict(color="#FF7043", width=2)))
+                            if tl:
+                                fig.add_trace(go.Scatter(
+                                    x=[tl[0]["step"], tl[-1]["step"]],
+                                    y=[tl[0]["loss"], tl[-1]["loss"]],
+                                    mode="lines", name="Trend",
+                                    line=dict(color="#66BB6A", width=1, dash="dash")))
+                            fig.update_layout(template="plotly_dark", height=350,
+                                              xaxis_title="Step", yaxis_title="Loss",
+                                              legend=dict(orientation="h", y=1.12),
+                                              margin=dict(t=30, b=40))
+                            st.plotly_chart(fig, width="stretch")
+
+                            if tl and len(tl) > 1:
+                                drop = (tl[0]["loss"] - tl[-1]["loss"]) / tl[0]["loss"] * 100
+                                st.caption(f"Loss drop: {tl[0]['loss']:.4f} → {tl[-1]['loss']:.4f} "
+                                           f"({drop:.1f}% reduction over {len(tl)} steps)")
+                    except Exception:
+                        pass
+
+                # Parameters
+                if params:
+                    st.markdown("#### Parameters")
+                    param_cols = st.columns(3)
+                    for i, (k, v) in enumerate(params.items()):
+                        param_cols[i % 3].markdown(f"**{k}:** `{v}`")
+
+                # Tags
+                tags = {k.replace("tags.", ""): v for k, v in sel_run.items()
+                        if k.startswith("tags.") and v is not None and "mlflow." not in k}
+                if tags:
+                    st.markdown("#### Tags")
+                    tag_cols = st.columns(3)
+                    for i, (k, v) in enumerate(tags.items()):
+                        tag_cols[i % 3].markdown(f"**{k}:** `{v}`")
 
 
 # ── Sidebar ──────────────────────────────────────────────────────────
