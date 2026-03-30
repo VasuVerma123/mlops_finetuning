@@ -972,9 +972,13 @@ with tab_experiments:
 
         display = []
         for r in db_runs:
+            ds_label = r["Dataset"] if r["Dataset"] != "—" else "—"
+            if ds_label != "—" and r.get("DS Examples"):
+                ds_label = f"{ds_label} ({int(r['DS Examples'])} rows)"
             display.append({
                 "Run":          r["Run"],
                 "Model":        r["Base Model"],
+                "Dataset":      ds_label,
                 "Quant":        r["Quant"],
                 "Epochs":       r["Epochs"],
                 "LR":           r["LR"],
@@ -1091,6 +1095,21 @@ with tab_experiments:
             cfg_cols[3].markdown(f"**Epochs:** `{sel_db['Epochs']}`")
             if sel_db["Stacked On"]:
                 st.markdown(f"**Stacked on:** `{sel_db['Stacked On']}`")
+
+            # Dataset info
+            if sel_db["Dataset"] and sel_db["Dataset"] != "—":
+                st.markdown("#### Dataset")
+                ds_cols = st.columns(4)
+                ds_cols[0].markdown(f"**File:** `{sel_db['Dataset']}`")
+                ds_cols[1].markdown(f"**Type:** `{sel_db.get('DS Type', '—')}`")
+                if sel_db.get("DS Examples"):
+                    ds_cols[2].markdown(f"**Examples:** `{int(sel_db['DS Examples'])}`")
+                s3 = sel_db.get("DS S3", "")
+                if s3:
+                    ds_cols[3].markdown(f"**S3:** [{s3[:30]}...]({s3})")
+                else:
+                    _local = OUTPUTS_DIR / sel_name / "data"
+                    ds_cols[3].markdown(f"**Local:** `outputs/{sel_name}/data/`")
 
             # Loss curve
             loss_log_path = OUTPUTS_DIR / sel_name / "loss_log.json"

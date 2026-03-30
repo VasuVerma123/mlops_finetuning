@@ -227,11 +227,15 @@ def get_evals_for_model(model_id: str) -> list[dict]:
 
 def get_full_run_table() -> list[dict]:
     """
-    Join models + eval_results for a complete metrics table.
-    Returns one row per training run, with the latest eval result merged in.
+    Join models + datasets + eval_results for a complete metrics table.
+    Returns one row per training run, with dataset info and latest eval merged in.
     """
     models = get_models()
     evals = get_eval_results()
+
+    # Index datasets by dataset_id
+    datasets = get_datasets()
+    ds_by_id: dict[str, dict] = {d["dataset_id"]: d for d in datasets}
 
     eval_by_model: dict[str, dict] = {}
     eval_by_exp: dict[str, dict] = {}
@@ -246,24 +250,29 @@ def get_full_run_table() -> list[dict]:
     rows = []
     for m in models:
         ev = eval_by_model.get(m["model_id"]) or eval_by_exp.get(m["experiment_name"], {})
+        ds = ds_by_id.get(m.get("dataset_id", ""), {})
         rows.append({
-            "Run":        m["experiment_name"],
-            "Base Model": m["base_model"],
-            "Quant":      m["quantization"],
-            "LoRA r":     m["lora_r"],
-            "Epochs":     m["epochs"],
-            "LR":         m["learning_rate"],
-            "Train Loss": m["final_train_loss"],
-            "Eval Loss":  m["best_eval_loss"],
-            "Perplexity": m["perplexity"],
-            "Val Acc %":  m["val_accuracy_pct"],
-            "Test Acc %": ev.get("overall_accuracy_pct"),
-            "Latency s":  ev.get("avg_latency_s"),
-            "Tok/s":      ev.get("avg_tokens_per_sec"),
-            "TTFT s":     ev.get("ttft_s"),
-            "Duration s": m["training_time_s"],
-            "Params":     m["trainable_params"],
-            "Stacked On": m["stacked_on"] or "",
-            "Created":    m["created_at"],
+            "Run":          m["experiment_name"],
+            "Base Model":   m["base_model"],
+            "Quant":        m["quantization"],
+            "LoRA r":       m["lora_r"],
+            "Epochs":       m["epochs"],
+            "LR":           m["learning_rate"],
+            "Dataset":      ds.get("name", "—"),
+            "DS Examples":  ds.get("num_examples") or None,
+            "DS Type":      ds.get("file_type", "—") if ds else "—",
+            "DS S3":        ds.get("s3_link", "") if ds else "",
+            "Train Loss":   m["final_train_loss"],
+            "Eval Loss":    m["best_eval_loss"],
+            "Perplexity":   m["perplexity"],
+            "Val Acc %":    m["val_accuracy_pct"],
+            "Test Acc %":   ev.get("overall_accuracy_pct"),
+            "Latency s":    ev.get("avg_latency_s"),
+            "Tok/s":        ev.get("avg_tokens_per_sec"),
+            "TTFT s":       ev.get("ttft_s"),
+            "Duration s":   m["training_time_s"],
+            "Params":       m["trainable_params"],
+            "Stacked On":   m["stacked_on"] or "",
+            "Created":      m["created_at"],
         })
     return rows
