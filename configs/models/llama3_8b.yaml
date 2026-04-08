@@ -1,0 +1,23 @@
+model_name: "meta-llama/Meta-Llama-3-8B-Instruct"
+display_name: "Llama 3 — 8B Instruct"
+family: "llama3"
+size: "8B"
+
+quantization: "4bit"
+compute_dtype: "bfloat16"
+
+lora:
+  r: 32
+  alpha: 64
+  dropout: 0.05
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+
+max_seq_length: 2048
+enable_thinking: false

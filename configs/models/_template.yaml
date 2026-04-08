@@ -1,0 +1,44 @@
+# ──────────────────────────────────────────────────────────────
+#  CUSTOM MODEL TEMPLATE
+# ──────────────────────────────────────────────────────────────
+# How to add your own model:
+#   1. Copy this file → configs/models/my_model.yaml
+#   2. Set model_name to the exact HuggingFace ID (e.g. "mistralai/Mistral-7B-Instruct-v0.3")
+#   3. Adjust LoRA rank based on model size:
+#        - 1-3B models:  r=8  or r=16,  alpha=2x rank
+#        - 4-8B models:  r=16 or r=32,  alpha=2x rank
+#        - 13B+ models:  r=32 or r=64,  alpha=2x rank
+#   4. target_modules below work for most Llama/Qwen/Mistral architectures.
+#      For other architectures, check the model's layer names on HuggingFace.
+#   5. Save the file — it will automatically appear in the Streamlit UI and CLI.
+#
+# Finding the right model_name:
+#   Go to https://huggingface.co/models → search your model → copy the ID
+#   Example: "meta-llama/Meta-Llama-3-8B-Instruct"
+#   Example: "mistralai/Mistral-7B-Instruct-v0.3"
+#   Example: "google/gemma-2-9b-it"
+# ──────────────────────────────────────────────────────────────
+
+model_name: "org/model-name"        # HuggingFace model ID (REQUIRED)
+display_name: "My Model — Size"     # Human-readable label for the UI
+family: "model_family"              # e.g. qwen3, llama3, mistral, gemma
+size: "7B"                          # Parameter count label
+
+quantization: "4bit"                # 4bit (QLoRA) | 8bit | none (full precision)
+compute_dtype: "bfloat16"           # bfloat16 | float16
+
+lora:
+  r: 32                             # LoRA rank (higher = more capacity, more VRAM)
+  alpha: 64                         # LoRA alpha (typically 2x rank)
+  dropout: 0.05
+  target_modules:                   # Works for Llama, Qwen, Mistral, Gemma, Phi
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+
+max_seq_length: 2048                # Max tokens per training example
+enable_thinking: false              # Set true for Qwen3 models with <think> tags
