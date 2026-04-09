@@ -1,5 +1,25 @@
 # MLOps Fine-Tuning Hub — Complete Pipeline Documentation
 
+## Scope: General-Purpose GenAI / SLM Fine-Tuning
+
+This repository is a **modular MLOps pipeline** for **supervised fine-tuning** of Hugging Face–compatible **causal language models** (SLMs and LLMs) using **QLoRA** (4-bit / 8-bit + LoRA). It is **not tied to one product or domain**.
+
+**Intended users:** Any internal team that needs a **repeatable** path from **dataset → train → evaluate → (optional) chat**, without maintaining bespoke training glue.
+
+**How teams specialize:**
+
+| Layer | How you customize |
+|-------|-------------------|
+| **Base model** | Add or edit YAML under `configs/models/` (presets for Qwen, Llama, etc., or copy `_template.yaml` for a new HF model ID). |
+| **Training hyperparameters** | `configs/defaults.yaml` and UI / CLI overrides → `PipelineConfig`. |
+| **Data** | JSONL (chat / messages), JSON, or CSV — your domain lives in the **content**, not in a hard-coded app name. |
+| **Evaluation** | Optional test JSONL + logic in `src/evaluation/` (scorers, metrics); extend for tool-use, classification-style checks, or swap for team-specific metrics. |
+| **Experiment tracking** | MLflow params, metrics, and artifacts — comparable runs across **different** models and datasets. |
+
+**Sharing with other teams:** Same codebase and CLI/UI; different **configs**, **datasets**, **S3 prefixes** (when cloud-backed), and **MLflow experiment names**. The core **training and tracking** stack stay shared so platform and product teams do not duplicate finetuning infrastructure.
+
+---
+
 ## Directory Structure
 
 ```
