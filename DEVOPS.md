@@ -57,19 +57,17 @@ The second command should show all 8 H100s.
 
 ---
 
-## What Goes in the .env File
+## Before You Run the Container
 
-Clone the repo, copy `.env.example` to `.env`, and fill in:
+Clone the repo, then ask the **team lead / ML engineer** to fill in `.env`:
 
+```bash
+cp .env.example .env
+# hand this off — the team lead fills in their HF token and S3 bucket name
 ```
-HF_TOKEN=<huggingface token with access to meta-llama/Llama-3.1-70B-Instruct>
-S3_BUCKET=<your bucket name>
-AWS_REGION=<region your bucket is in>
-```
 
-`AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` stay blank — the IAM Role handles auth automatically.
-
-> The HuggingFace token needs gated model access approved on huggingface.co for `meta-llama/Llama-3.1-70B-Instruct`.
+They own the HuggingFace account and the S3 bucket — that config is theirs, not yours.
+Once `.env` is filled in and placed in the repo directory, you're ready.
 
 ---
 

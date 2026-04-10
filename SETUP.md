@@ -4,6 +4,27 @@
 
 ---
 
+## First-Time Setup (Team Lead / ML Engineer Only)
+
+Before the app can run, someone needs to fill in the `.env` file on the EC2 machine.
+This is a one-time step — do it once, and everyone on the team is set.
+
+Ask DevOps to run `cp .env.example .env` on the machine, then fill in:
+
+```
+HF_TOKEN=<your HuggingFace token>
+S3_BUCKET=<your S3 bucket name>
+AWS_REGION=<region your bucket is in>
+```
+
+- **HF_TOKEN** — get it from huggingface.co → Settings → Access Tokens. Needs gated access approved for `meta-llama/Llama-3.1-70B-Instruct`.
+- **S3_BUCKET** — the bucket where datasets and trained models will be stored.
+- **AWS credentials** — leave blank. The EC2 IAM Role handles S3 access automatically.
+
+Once `.env` is in place, DevOps starts the container and shares the URL. You never touch this again.
+
+---
+
 ## Access the App
 
 Open your browser and go to:
