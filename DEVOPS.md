@@ -152,12 +152,17 @@ Save and close (`Ctrl+X` → `Y` → Enter in nano).
 # Build the Docker image (takes 5-10 minutes first time)
 docker build -f Dockerfile.aws -t mlops-hub .
 
+# Create an empty mlflow.db on the host so the volume mount works
+touch mlflow.db
+
 # Run it in the background on port 8501
 docker run -d \
   --gpus all \
   --name mlops-hub \
   --restart unless-stopped \
   -p 8501:8501 \
+  -v "$(pwd)/mlflow.db:/app/mlflow.db" \
+  -v "$(pwd)/outputs:/app/outputs" \
   --env-file .env \
   mlops-hub
 ```
@@ -204,7 +209,10 @@ git pull
 docker build -f Dockerfile.aws -t mlops-hub .
 docker stop mlops-hub && docker rm mlops-hub
 docker run -d --gpus all --name mlops-hub --restart unless-stopped \
-  -p 8501:8501 --env-file .env mlops-hub
+  -p 8501:8501 \
+  -v "$(pwd)/mlflow.db:/app/mlflow.db" \
+  -v "$(pwd)/outputs:/app/outputs" \
+  --env-file .env mlops-hub
 ```
 
 ### Free up disk space (delete old checkpoints)

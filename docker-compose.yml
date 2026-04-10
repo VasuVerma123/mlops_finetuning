@@ -1,3 +1,5 @@
+# Run `touch mlflow.db` in this directory before `docker compose up`
+# so Docker mounts it as a file, not a directory.
 services:
   app:
     build:
@@ -9,6 +11,7 @@ services:
       - "5000:5000"
     volumes:
       - ./outputs:/app/outputs
+      - ./mlflow.db:/app/mlflow.db
       - hf_cache:/app/.cache/huggingface
     environment:
       - NVIDIA_VISIBLE_DEVICES=all

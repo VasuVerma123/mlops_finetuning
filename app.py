@@ -46,6 +46,10 @@ OUTPUTS_DIR = ROOT / "outputs"
 OUTPUTS_DIR.mkdir(exist_ok=True)
 _db_path = str(ROOT / "mlflow.db").replace("\\", "/")
 MLFLOW_URI = os.environ.get("MLFLOW_TRACKING_URI", f"sqlite:///{_db_path}")
+# Resolve the actual SQLite file path from MLFLOW_URI for backups
+_mlflow_db_file = Path(
+    MLFLOW_URI.replace("sqlite:////", "/").replace("sqlite:///", "")
+)
 
 # ── S3 config (optional — set S3_BUCKET env var to enable) ───────────────────
 S3_BUCKET = os.environ.get("S3_BUCKET", "").strip()
@@ -617,7 +621,7 @@ with tab_train:
                     if _ap and os.path.isdir(_ap):
                         _s3.upload_folder(_ap, f"outputs/{exp_name}/final_adapter")
                     # Backup MLflow DB so history survives EC2 restarts
-                    _s3.backup_db(ROOT / "mlflow.db")
+                    _s3.backup_db(_mlflow_db_file)
 
                 status_box.update(label="Training complete!", state="complete", expanded=True)
 
