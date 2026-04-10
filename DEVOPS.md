@@ -1,241 +1,108 @@
 # DevOps Setup Guide — MLOps Fine-Tuning Hub
 
-> Do this once. After this, the app runs permanently and the team just uses a URL.
+> One-time setup. After this, the team uses a browser URL — no installs, no access keys, nothing.
 
 ---
 
-## What You Need Before Starting
+## What This App Does (Infrastructure Context)
 
-- AWS account with permission to create EC2, S3, and IAM resources
-- Your HuggingFace token (get it from huggingface.co → Settings → Access Tokens)
+This is a Streamlit-based fine-tuning platform for large language models. The team uses it through a browser — they upload datasets, launch training runs, and view results, all from the UI.
+
+**Why EC2:**
+Training a 70B parameter model (Llama 3.1-70B with QLoRA) requires serious GPU compute. The app runs entirely on the EC2 instance — Streamlit UI, training, inference, everything. The team never installs anything locally; they just open the URL you give them.
+Recommended instance: `p5.4xlarge` (8x H100 80GB GPUs).
+
+**Why S3:**
+All datasets uploaded through the UI, all trained adapter weights, and all experiment history are stored in S3. This means:
+- Nothing is lost if the EC2 instance is stopped or replaced
+- Any team member's upload is immediately available to everyone
+- Trained models persist independently of the machine that trained them
+
+**Why an IAM Role (not access keys):**
+The EC2 instance gets an IAM Role with S3 permissions attached directly. This means the app can read/write S3 without any credentials hardcoded or stored anywhere. No key rotation, no secret management.
 
 ---
 
-## Step 1 — Create the S3 Bucket
+## What You Need to Set Up
 
-In AWS Console → S3 → Create Bucket
+Before running the Docker container, three things need to exist in AWS:
 
-- **Bucket name:** pick any name, e.g. `mlops-finetuning-team`
-- **Region:** pick one close to you, e.g. `us-east-1`
-- Block public access: leave ON (default)
-- Everything else: leave default → Create
+**1. An S3 bucket**
+Any name, any region. The app will store datasets, trained adapters, and experiment backups here.
 
-Or via CLI:
+**2. An IAM Role for EC2 with S3 access**
+Create a role with `AmazonS3FullAccess`, attach it to the EC2 instance. That's the only permission needed.
+
+**3. A `p5.4xlarge` EC2 instance (Ubuntu 22.04 LTS)**
+- Attach the IAM Role above
+- Open port `8501` to `0.0.0.0/0` in the Security Group (this is the Streamlit UI port)
+- Open port `22` to your IP for SSH
+- 200 GB storage minimum (Llama 70B weights alone are ~140 GB)
+
+---
+
+## Prerequisites on the EC2 Machine
+
+Once the instance is running, SSH in and make sure these are installed:
+
+- **Docker Engine + Compose plugin** (docker-ce, not docker.io)
+- **NVIDIA Container Toolkit** (so Docker can access the H100 GPUs)
+
+Both have standard install guides. After installing, verify with:
 ```bash
-aws s3 mb s3://mlops-finetuning-team --region us-east-1
-```
-
----
-
-## Step 2 — Create an IAM Role for EC2
-
-In AWS Console → IAM → Roles → Create Role
-
-- **Trusted entity:** AWS Service → EC2
-- **Permissions:** attach `AmazonS3FullAccess`
-- **Role name:** `mlops-ec2-role`
-- Create Role
-
-> This lets the EC2 machine read/write S3 without any hardcoded credentials.
-
----
-
-## Step 3 — Launch the EC2 Instance
-
-In AWS Console → EC2 → Launch Instance
-
-| Setting | Value |
-|---|---|
-| **Name** | `mlops-hub` |
-| **AMI** | Ubuntu 22.04 LTS |
-| **Instance type** | `g4dn.xlarge` (1x T4 GPU, cheapest GPU option) |
-| **Key pair** | Create or use existing — you'll need this to SSH in |
-| **Storage** | 100 GB gp3 (models are large) |
-| **IAM Instance Profile** | `mlops-ec2-role` (the role you just created) |
-
-**Security Group — open these ports:**
-
-| Port | Protocol | Source | Purpose |
-|---|---|---|---|
-| 22 | TCP | Your IP | SSH access |
-| 8501 | TCP | 0.0.0.0/0 | Streamlit UI (everyone) |
-
-Launch the instance. Copy the **Public IPv4 address** — that's the URL your team will use.
-
----
-
-## Step 4 — SSH Into the Machine
-
-```bash
-ssh -i your-key.pem ubuntu@<EC2-PUBLIC-IP>
-```
-
----
-
-## Step 5 — Install Docker
-
-Run these commands on the EC2 machine:
-
-```bash
-# Update packages and install prerequisites
-sudo apt-get update
-sudo apt-get install -y ca-certificates curl gnupg
-
-# Add Docker's official GPG key and repo
-sudo install -m 0755 -d /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
-  | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-sudo chmod a+r /etc/apt/keyrings/docker.gpg
-
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
-  https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
-  | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-
-# Install Docker Engine + Compose plugin
-sudo apt-get update
-sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
-
-# Allow running Docker without sudo
-sudo usermod -aG docker ubuntu
-
-# Apply group change (or just log out and back in)
-newgrp docker
-
-# Verify
-docker --version
 docker compose version
-```
-
----
-
-## Step 6 — Install NVIDIA Container Toolkit (for GPU)
-
-```bash
-# Add NVIDIA repo
-curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
-  | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
-
-curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
-  | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
-  | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
-
-sudo apt-get update
-sudo apt-get install -y nvidia-container-toolkit
-
-# Restart Docker
-sudo systemctl restart docker
-
-# Verify GPU is visible
 docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi
 ```
+The second command should show all 8 H100s.
 
 ---
 
-## Step 7 — Clone the Repo
+## What Goes in the .env File
 
-```bash
-git clone https://github.com/VasuVerma123/mlops_finetuning.git
-cd mlops_finetuning
+Clone the repo, copy `.env.example` to `.env`, and fill in:
+
 ```
+HF_TOKEN=<huggingface token with access to meta-llama/Llama-3.1-70B-Instruct>
+S3_BUCKET=<your bucket name>
+AWS_REGION=<region your bucket is in>
+```
+
+`AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` stay blank — the IAM Role handles auth automatically.
+
+> The HuggingFace token needs gated model access approved on huggingface.co for `meta-llama/Llama-3.1-70B-Instruct`.
 
 ---
 
-## Step 8 — Create the .env File
+## Run the App
 
 ```bash
-cp .env.example .env
-nano .env
-```
-
-Fill in these two lines (everything else can stay blank):
-
-```
-HF_TOKEN=hf_your_token_here
-S3_BUCKET=mlops-finetuning-team
-AWS_REGION=us-east-1
-```
-
-Save and close (`Ctrl+X` → `Y` → Enter in nano).
-
----
-
-## Step 9 — Build and Start the Container
-
-```bash
-# Create empty mlflow.db on the host before first run
-# (Docker needs this to exist as a FILE, not create it as a directory)
 touch mlflow.db
-
-# Build the image and start in the background
-# (uses Dockerfile.gpu — CUDA base image required for GPU training)
 docker compose up -d --build
 ```
 
-Check it started:
-```bash
-docker compose ps
-docker compose logs -f
-```
-
----
-
-## Done — Share This URL With the Team
-
-```
-http://<EC2-PUBLIC-IP>:8501
-```
-
-The app is running. The team can now open that URL in any browser and use it.
+That's it. Share `http://<EC2-PUBLIC-IP>:8501` with the team.
 
 ---
 
 ## Day-to-Day Operations
 
-### Check if the app is running
 ```bash
+# Check status
 docker compose ps
-```
 
-### View live logs
-```bash
+# View logs
 docker compose logs -f
-```
 
-### Restart the app
-```bash
+# Restart
 docker compose restart
+
+# Update after a new code push
+git pull && docker compose up -d --build
+
+# Free disk — delete training checkpoints (keeps final adapters)
+rm -rf outputs/<experiment-name>/checkpoint-*
 ```
 
-### Update the code (when there's a new push)
-```bash
-cd mlops_finetuning
-git pull
-docker compose up -d --build
-```
+**Stopping EC2 to save cost:** Use "Stop" in the AWS Console, not "Terminate". Stop preserves the disk. Terminate deletes everything.
 
-### Free up disk space (delete old checkpoints)
-```bash
-# List what's taking space
-du -sh ~/mlops_finetuning/outputs/*/
-
-# Delete a specific experiment's checkpoints (keeps final_adapter)
-rm -rf ~/mlops_finetuning/outputs/<exp-name>/checkpoint-*
-```
-
-### Stop EC2 to save money (when not in use)
-In AWS Console → EC2 → Select instance → Instance State → **Stop**
-(Stop, not Terminate — Stop keeps the disk. Terminate deletes everything.)
-
-### Restore after EC2 restart
-The app starts automatically on Docker restart (`--restart unless-stopped`).
-MLflow history is backed up to S3 after every training run — nothing is lost.
-
----
-
-## Cost Estimate
-
-| Resource | Cost |
-|---|---|
-| g4dn.xlarge EC2 | ~$0.526/hour (stop when not training) |
-| S3 storage | ~$0.023/GB/month (negligible for model files) |
-| S3 data transfer | Free within same region |
+**After EC2 restart:** The container starts automatically. MLflow history is backed up to S3 after every training run so nothing is lost even if the disk is wiped.
