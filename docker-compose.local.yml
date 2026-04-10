@@ -13,6 +13,10 @@ services:
     environment:
       - HF_TOKEN=${HF_TOKEN}
       - MLFLOW_TRACKING_URI=sqlite:////app/mlflow.db
+      - S3_BUCKET=${S3_BUCKET}
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
     restart: unless-stopped
 
 volumes:

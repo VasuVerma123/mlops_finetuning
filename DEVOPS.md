@@ -77,11 +77,23 @@ ssh -i your-key.pem ubuntu@<EC2-PUBLIC-IP>
 Run these commands on the EC2 machine:
 
 ```bash
-# Update packages
+# Update packages and install prerequisites
 sudo apt-get update
+sudo apt-get install -y ca-certificates curl gnupg
 
-# Install Docker
-sudo apt-get install -y docker.io
+# Add Docker's official GPG key and repo
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+  | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+sudo chmod a+r /etc/apt/keyrings/docker.gpg
+
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+  https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+  | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+# Install Docker Engine + Compose plugin
+sudo apt-get update
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
 
 # Allow running Docker without sudo
 sudo usermod -aG docker ubuntu
@@ -89,8 +101,9 @@ sudo usermod -aG docker ubuntu
 # Apply group change (or just log out and back in)
 newgrp docker
 
-# Verify Docker works
+# Verify
 docker --version
+docker compose version
 ```
 
 ---
@@ -146,31 +159,22 @@ Save and close (`Ctrl+X` → `Y` → Enter in nano).
 
 ---
 
-## Step 9 — Build and Run the Container
+## Step 9 — Build and Start the Container
 
 ```bash
-# Build the Docker image (takes 5-10 minutes first time)
-docker build -f Dockerfile.aws -t mlops-hub .
-
-# Create an empty mlflow.db on the host so the volume mount works
+# Create empty mlflow.db on the host before first run
+# (Docker needs this to exist as a FILE, not create it as a directory)
 touch mlflow.db
 
-# Run it in the background on port 8501
-docker run -d \
-  --gpus all \
-  --name mlops-hub \
-  --restart unless-stopped \
-  -p 8501:8501 \
-  -v "$(pwd)/mlflow.db:/app/mlflow.db" \
-  -v "$(pwd)/outputs:/app/outputs" \
-  --env-file .env \
-  mlops-hub
+# Build the image and start in the background
+# (uses Dockerfile.gpu — CUDA base image required for GPU training)
+docker compose up -d --build
 ```
 
 Check it started:
 ```bash
-docker ps
-docker logs mlops-hub
+docker compose ps
+docker compose logs -f
 ```
 
 ---
@@ -194,25 +198,19 @@ docker ps
 
 ### View live logs
 ```bash
-docker logs -f mlops-hub
+docker compose logs -f
 ```
 
 ### Restart the app
 ```bash
-docker restart mlops-hub
+docker compose restart
 ```
 
 ### Update the code (when there's a new push)
 ```bash
 cd mlops_finetuning
 git pull
-docker build -f Dockerfile.aws -t mlops-hub .
-docker stop mlops-hub && docker rm mlops-hub
-docker run -d --gpus all --name mlops-hub --restart unless-stopped \
-  -p 8501:8501 \
-  -v "$(pwd)/mlflow.db:/app/mlflow.db" \
-  -v "$(pwd)/outputs:/app/outputs" \
-  --env-file .env mlops-hub
+docker compose up -d --build
 ```
 
 ### Free up disk space (delete old checkpoints)
