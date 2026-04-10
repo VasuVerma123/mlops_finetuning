@@ -193,7 +193,7 @@ The app is running. The team can now open that URL in any browser and use it.
 
 ### Check if the app is running
 ```bash
-docker ps
+docker compose ps
 ```
 
 ### View live logs
