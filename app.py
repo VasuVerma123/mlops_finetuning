@@ -47,6 +47,15 @@ OUTPUTS_DIR.mkdir(exist_ok=True)
 _db_path = str(ROOT / "mlflow.db").replace("\\", "/")
 MLFLOW_URI = os.environ.get("MLFLOW_TRACKING_URI", f"sqlite:///{_db_path}")
 
+# ── S3 config (optional — set S3_BUCKET env var to enable) ───────────────────
+S3_BUCKET = os.environ.get("S3_BUCKET", "").strip()
+if S3_BUCKET:
+    from src.cloud import s3 as _s3
+    S3_ENABLED = True
+else:
+    _s3 = None
+    S3_ENABLED = False
+
 PRESET_MODELS = {
     "Qwen/Qwen3-4B": "Qwen 3 — 4B",
     "Qwen/Qwen3-8B": "Qwen 3 — 8B",
@@ -304,9 +313,16 @@ with tab_train:
                         if result["valid"]:
                             n = result["stats"]["usable_rows"]
                             st.success(f"{n} usable rows")
+                            _s3_link = ""
+                            if S3_ENABLED:
+                                _s3_link = _s3.upload_file(
+                                    train_path, f"datasets/{exp_name}/{train_upload.name}"
+                                )
+                                if _s3_link:
+                                    st.caption(f"Uploaded to S3: `{_s3_link}`")
                             _ds_id = save_dataset(
                                 name=train_upload.name, file_type="csv",
-                                num_examples=n,
+                                num_examples=n, s3_link=_s3_link,
                             )
                             st.session_state["last_dataset_id"] = _ds_id
                         else:
@@ -322,11 +338,19 @@ with tab_train:
                     c1, c2 = st.columns(2)
                     c1.metric("Tool-call", s.get("tool_call_examples", 0))
                     c2.metric("Think-augmented", s.get("think_augmented_examples", 0))
+                    _s3_link = ""
+                    if S3_ENABLED:
+                        _s3_link = _s3.upload_file(
+                            train_path, f"datasets/{exp_name}/{train_upload.name}"
+                        )
+                        if _s3_link:
+                            st.caption(f"Uploaded to S3: `{_s3_link}`")
                     _ds_id = save_dataset(
                         name=train_upload.name, file_type=ftype,
                         num_examples=result["total"],
                         tool_call_examples=s.get("tool_call_examples", 0),
                         think_examples=s.get("think_augmented_examples", 0),
+                        s3_link=_s3_link,
                     )
                     st.session_state["last_dataset_id"] = _ds_id
                     st.session_state["last_dataset_stats"] = s
@@ -432,6 +456,12 @@ with tab_train:
 
                 if MLFLOW_AVAILABLE:
                     mlflow.set_tracking_uri(MLFLOW_URI)
+                    if S3_ENABLED:
+                        try:
+                            artifact_loc = f"s3://{S3_BUCKET}/mlflow-artifacts/{exp_name}"
+                            mlflow.create_experiment(exp_name, artifact_location=artifact_loc)
+                        except Exception:
+                            pass  # already exists — keeps its original artifact location
                     mlflow.set_experiment(exp_name)
                     mlflow.start_run(run_name=exp_name, tags={
                         "model": selected_hf_id, "quantization": quant,
@@ -580,6 +610,14 @@ with tab_train:
                     if os.path.exists(loss_log):
                         mlflow.log_artifact(loss_log)
                     mlflow.end_run()
+
+                if S3_ENABLED:
+                    # Upload trained adapter to S3 for persistent storage
+                    _ap = summary.get("adapter_path", "")
+                    if _ap and os.path.isdir(_ap):
+                        _s3.upload_folder(_ap, f"outputs/{exp_name}/final_adapter")
+                    # Backup MLflow DB so history survives EC2 restarts
+                    _s3.backup_db(ROOT / "mlflow.db")
 
                 status_box.update(label="Training complete!", state="complete", expanded=True)
 
