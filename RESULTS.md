@@ -215,12 +215,15 @@ training pipeline works, not as a claim about general ability.*
 pip install torch transformers peft accelerate trl datasets
 
 # Train (each script generates its own data)
+export ECHO_V46_OUT=./out/v4.6
+export ECHO_V47_OUT=./out/v4.7
+export ECHO_V46_ADAPTER=./out/v4.6/final_v4.6
 python aws_finetune_v4_6.py
 python aws_finetune_v4_7.py
 
 # Evaluate
-export ECHO_V46_ADAPTER=/path/to/final_v4.6
-export ECHO_V47_ADAPTER=/path/to/final_v4.7
+export ECHO_V46_ADAPTER=./out/v4.6/final_v4.6
+export ECHO_V47_ADAPTER=./out/v4.7/final_v4.7
 export ECHO_EVAL_RESULTS=eval_v47_results.json
 python aws_eval_v4_7.py
 ```

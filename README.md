@@ -185,7 +185,18 @@ accuracy, the per-scenario scores, the names of any failed checks, and the raw m
 responses.
 
 To retrain from scratch, run `aws_finetune_v4_6.py` then `aws_finetune_v4_7.py` — both
-generate their own synthetic datasets, so no data files are needed.
+generate their own synthetic datasets, so no data files are needed. Set `ECHO_V46_OUT`
+and `ECHO_V47_OUT` to choose where adapters are written; the defaults point at the
+SageMaker box they were originally trained on.
+
+| Environment variable | Used by | Default |
+|---|---|---|
+| `ECHO_BASE_MODEL` | all three scripts | `Qwen/Qwen3-4B` |
+| `ECHO_V46_OUT` | `aws_finetune_v4_6.py` | `/home/ssm-user/echo_v4_6_output` |
+| `ECHO_V47_OUT` | `aws_finetune_v4_7.py` | `/home/ssm-user/echo_v4_7_output` |
+| `ECHO_V46_ADAPTER` | `aws_finetune_v4_7.py`, `aws_eval_v4_7.py` | `.../echo_v4_6_output/final_v4.6` |
+| `ECHO_V47_ADAPTER` | `aws_eval_v4_7.py` | `.../echo_v4_7_output/final_v4.7` |
+| `ECHO_EVAL_RESULTS` | `aws_eval_v4_7.py` | `eval_v47_results.json` |
 
 ---
 

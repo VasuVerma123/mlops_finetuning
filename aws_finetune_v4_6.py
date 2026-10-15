@@ -525,8 +525,10 @@ class Logger(TrainerCallback):
 
 
 def main():
-    MODEL_NAME = "Qwen/Qwen3-4B"
-    OUT_DIR = "/home/ssm-user/echo_v4_6_output"
+    # Defaults match the AWS SageMaker box these were trained on; override via env
+    # so the scripts run anywhere.
+    MODEL_NAME = os.environ.get("ECHO_BASE_MODEL", "Qwen/Qwen3-4B")
+    OUT_DIR = os.environ.get("ECHO_V46_OUT", "/home/ssm-user/echo_v4_6_output")
     EPOCHS = 4
     LR = 5e-5
     BATCH_SIZE = 2
