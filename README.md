@@ -3,6 +3,15 @@
 End-to-end, config-driven pipeline for fine-tuning language models with QLoRA.  
 Built for the Echo scheduling assistant but fully reusable for any SFT task.
 
+Pick a model config, upload a JSONL dataset, train, evaluate, and compare runs --
+from a Streamlit UI or the CLI. Every run is tracked in MLflow and SQLite.
+
+> **Two branches, two projects.**
+> This branch (`main`) is the general-purpose fine-tuning hub.
+> [`master`](https://github.com/VasuVerma123/mlops_finetuning/tree/master) holds **Echo**,
+> the Qwen3-4B scheduling agent this hub was generalised from -- it scores 98% (47/48) on
+> its tool-calling benchmark and is published on Ollama Hub. The two branches share no code.
+
 ## Architecture
 
 ```
@@ -29,11 +38,17 @@ mlops_finetuning/
 │   │   └── metrics.py     # Compute accuracy, latency, per-scenario breakdown
 │   ├── tracking/
 │   │   └── mlflow_tracker.py  # MLflow experiment logging
+│   ├── database/
+│   │   └── db.py          # SQLite layer: runs, datasets, eval results
 │   └── serving/
 │       └── inference.py   # Load model + adapter, generate responses
 ├── app.py                 # Streamlit UI (3 tabs: Train, Evaluate, Experiments)
 ├── run.py                 # CLI entry point
-├── outputs/               # Training outputs (adapters, logs, results)
+├── seed_db.py             # Populate the DB with sample runs for a UI walkthrough
+├── sample_data/           # Tiny example train/val JSONL to try the pipeline
+├── outputs/               # Training outputs, adapters, logs, mlops.db (gitignored)
+├── PIPELINE.md            # Stage-by-stage walkthrough of the whole pipeline
+├── FUTURE.md              # Roadmap: S3 + EC2 as a shared internal platform
 └── requirements.txt
 ```
 
@@ -74,7 +89,7 @@ Opens a web interface with three tabs:
 # List available models
 python run.py models
 
-# Validate a dataset
+# Validate a dataset (needs only pyyaml -- no GPU, no torch)
 python run.py validate --file my_data.jsonl
 
 # Train a model

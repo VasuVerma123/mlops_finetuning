@@ -308,3 +308,20 @@ The current codebase is a **strong modular baseline**: configuration-driven mode
 ---
 
 *Forward-looking engineering proposal. AWS pricing and instance families change; validate current numbers against your org’s AWS account and region.*
+
+---
+
+## Parked Ideas (not yet scoped)
+
+Captured so they are not lost; none of these are committed work.
+
+- **Synthetic data generation in the hub.** Echo's training sets were produced by
+  generator functions inside its training scripts. Pulling that into the hub as a first
+  class step -- describe the scenarios, get a JSONL -- would remove the biggest manual
+  step in starting a new fine-tune.
+- **Full config surface in the UI.** The Train tab exposes the common hyperparameters;
+  the model YAML exposes more. Closing that gap would remove most reasons to edit YAML
+  by hand.
+- **Cost tracking per run.** Alongside latency and tokens/sec, record GPU-hours and an
+  estimated dollar cost per run, so experiments can be compared on price as well as
+  accuracy.

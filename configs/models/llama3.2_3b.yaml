@@ -1,5 +1,5 @@
 model_name: "meta-llama/Llama-3.2-3B-Instruct"
-display_name: "Llama 3.2 — 3B Instruct"
+display_name: "Llama 3.2 - 3B Instruct"
 family: "llama3.2"
 size: "3B"
 

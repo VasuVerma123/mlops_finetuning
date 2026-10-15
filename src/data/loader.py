@@ -15,7 +15,10 @@ import random
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-from datasets import Dataset
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # only for annotations; `from __future__ import annotations` keeps
+    from datasets import Dataset  # them unevaluated, so this is never imported at runtime
 
 
 def load_jsonl(path: str | Path) -> List[dict]:
@@ -126,8 +129,11 @@ def train_val_split(
     return shuffled[val_size:], shuffled[:val_size]
 
 
-def records_to_dataset(records: List[dict]) -> Dataset:
+def records_to_dataset(records: List[dict]) -> "Dataset":
     """Convert a list of message dicts to a HuggingFace Dataset."""
+    # Imported here, not at module scope, so that dataset validation (`run.py validate`)
+    # works with only pyyaml installed -- no torch, no datasets.
+    from datasets import Dataset
     return Dataset.from_list(records)
 
 

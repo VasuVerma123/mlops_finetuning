@@ -1,5 +1,5 @@
 model_name: "Qwen/Qwen3-4B"
-display_name: "Qwen 3 — 4B"
+display_name: "Qwen 3 - 4B"
 family: "qwen3"
 size: "4B"
 

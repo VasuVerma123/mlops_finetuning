@@ -44,7 +44,7 @@ def cmd_train(args):
     )
 
     print(f"\n{'=' * 60}")
-    print(f"  MLOps Fine-Tuning Pipeline — TRAIN")
+    print(f"  MLOps Fine-Tuning Pipeline - TRAIN")
     print(f"  Model:      {cfg.model.display_name}")
     print(f"  Experiment: {cfg.experiment_name}")
     print(f"  Train file: {cfg.train_file}")
@@ -90,7 +90,7 @@ def cmd_eval(args):
     )
 
     print(f"\n{'=' * 60}")
-    print(f"  MLOps Fine-Tuning Pipeline — EVALUATE")
+    print(f"  MLOps Fine-Tuning Pipeline - EVALUATE")
     print(f"  Model:   {cfg.model.display_name}")
     print(f"  Adapter: {args.adapter}")
     print(f"  Tests:   {args.test}")
@@ -128,7 +128,7 @@ def cmd_serve(args):
     )
 
     print(f"\n{'=' * 60}")
-    print(f"  MLOps Fine-Tuning Pipeline — SERVE")
+    print(f"  MLOps Fine-Tuning Pipeline - SERVE")
     print(f"  Model:   {cfg.model.display_name}")
     print(f"  Adapter: {args.adapter}")
     print(f"{'=' * 60}\n")
@@ -191,14 +191,14 @@ def cmd_validate(args):
         result = validate_file(path)
 
     if result["valid"]:
-        print(f"  VALID — {result['total']} records")
+        print(f"  VALID - {result['total']} records")
         if "stats" in result:
             stats = result["stats"]
             print(f"  Tool-call examples:    {stats.get('tool_call_examples', 0)}")
             print(f"  Think-augmented:       {stats.get('think_augmented_examples', 0)}")
             print(f"  Avg turns per example: {stats.get('avg_turns', 0):.1f}")
     else:
-        print(f"  INVALID — {len(result['errors'])} errors:")
+        print(f"  INVALID - {len(result['errors'])} errors:")
         for e in result["errors"][:10]:
             print(f"    {e}")
     print()

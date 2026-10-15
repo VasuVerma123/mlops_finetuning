@@ -10,7 +10,7 @@
 #        - 13B+ models:  r=32 or r=64,  alpha=2x rank
 #   4. target_modules below work for most Llama/Qwen/Mistral architectures.
 #      For other architectures, check the model's layer names on HuggingFace.
-#   5. Save the file — it will automatically appear in the Streamlit UI and CLI.
+#   5. Save the file - it will automatically appear in the Streamlit UI and CLI.
 #
 # Finding the right model_name:
 #   Go to https://huggingface.co/models → search your model → copy the ID
@@ -20,7 +20,7 @@
 # ──────────────────────────────────────────────────────────────
 
 model_name: "org/model-name"        # HuggingFace model ID (REQUIRED)
-display_name: "My Model — Size"     # Human-readable label for the UI
+display_name: "My Model - Size"     # Human-readable label for the UI
 family: "model_family"              # e.g. qwen3, llama3, mistral, gemma
 size: "7B"                          # Parameter count label
 

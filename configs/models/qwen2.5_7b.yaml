@@ -1,5 +1,5 @@
 model_name: "Qwen/Qwen2.5-7B-Instruct"
-display_name: "Qwen 2.5 — 7B Instruct"
+display_name: "Qwen 2.5 - 7B Instruct"
 family: "qwen2.5"
 size: "7B"
 

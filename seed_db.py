@@ -53,9 +53,9 @@ ds3 = save_dataset(
     avg_turns=1.0,
 )
 
-print(f"  ✓ {ds1[:8]}  customer_support_train.jsonl  (1240 examples)")
-print(f"  ✓ {ds2[:8]}  tool_calling_v2.jsonl         (580 examples)")
-print(f"  ✓ {ds3[:8]}  reasoning_finetune.csv         (3200 examples)")
+print(f"  [OK] {ds1[:8]}  customer_support_train.jsonl  (1240 examples)")
+print(f"  [OK] {ds2[:8]}  tool_calling_v2.jsonl         (580 examples)")
+print(f"  [OK] {ds3[:8]}  reasoning_finetune.csv         (3200 examples)")
 
 # ── Models ─────────────────────────────────────────────────────────────
 
@@ -118,9 +118,9 @@ m3 = save_model_result(
     stacked_on=None,
 )
 
-print(f"  ✓ {m1[:8]}  exp_seed_qwen3_4b_support  loss=0.4821  ppl=1.666  val_acc=72%")
-print(f"  ✓ {m2[:8]}  exp_seed_qwen3_4b_tools    loss=0.3217  ppl=1.476  val_acc=85%  (stacked)")
-print(f"  ✓ {m3[:8]}  exp_seed_llama3_8b_reason  loss=0.6104  ppl=1.918  val_acc=61%")
+print(f"  [OK] {m1[:8]}  exp_seed_qwen3_4b_support  loss=0.4821  ppl=1.666  val_acc=72%")
+print(f"  [OK] {m2[:8]}  exp_seed_qwen3_4b_tools    loss=0.3217  ppl=1.476  val_acc=85%  (stacked)")
+print(f"  [OK] {m3[:8]}  exp_seed_llama3_8b_reason  loss=0.6104  ppl=1.918  val_acc=61%")
 
 # ── Eval results ───────────────────────────────────────────────────────
 
@@ -175,9 +175,9 @@ e3 = save_eval_result(
     scenario_results=scenarios_support,
 )
 
-print(f"  ✓ {e1[:8]}  support eval  accuracy=88.9%  latency=1.875s  (fine-tuned)")
-print(f"  ✓ {e2[:8]}  tools eval    accuracy=91.7%  latency=2.2s    (stacked adapter)")
-print(f"  ✓ {e3[:8]}  support eval  accuracy=61.2%  latency=3.1s    (base model)")
+print(f"  [OK] {e1[:8]}  support eval  accuracy=88.9%  latency=1.875s  (fine-tuned)")
+print(f"  [OK] {e2[:8]}  tools eval    accuracy=91.7%  latency=2.2s    (stacked adapter)")
+print(f"  [OK] {e3[:8]}  support eval  accuracy=61.2%  latency=3.1s    (base model)")
 
 # ── Summary ────────────────────────────────────────────────────────────
 
