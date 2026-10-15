@@ -2,6 +2,9 @@
 
 End-to-end guide for fine-tuning, converting, deploying, and sharing Echo as an Ollama model.
 
+> Start at [README.md](README.md) for what Echo is and how it scores.
+> Benchmark detail and training recipes: [RESULTS.md](RESULTS.md).
+
 ---
 
 ## What Is Echo?
@@ -19,6 +22,7 @@ Echo is a fine-tuned AI scheduling assistant for Dr. Maya Chen (Licensed Therapi
 | Context length | 4096 tokens |
 | Temperature | 0.3 |
 | Repeat penalty | 1.1 |
+| Accuracy | 98% (47/48 checks) — see [RESULTS.md](RESULTS.md) |
 | Ollama Hub | [vasuverma/echo-v4.7](https://ollama.com/vasuverma/echo-v4.7) |
 
 ---
@@ -71,7 +75,7 @@ pip install ollama colorama
 
 Run the test script:
 ```bash
-python ollama_test.py
+python Echo_finetune/ollama_test.py
 ```
 
 The script:
@@ -121,20 +125,21 @@ For non-action questions (hours, policy, greeting), Echo replies in plain text.
 
 ---
 
-## Files in This Directory
+## Files in This Repository
 
 | File | Purpose |
 |---|---|
-| `prepare_ollama_v47.py` | Merges V4.6 + V4.7 LoRA adapters into Qwen3-4B, converts to GGUF, registers in Ollama |
-| `output/echo-v4.7-merged/` | Full merged model in HuggingFace safetensors format (~8 GB) |
-| `output/echo_v4.7_q8.gguf` | GGUF model file (~4.3 GB, Q8_0). What Ollama actually loads |
-| `output/Modelfile_v4.7` | Ollama config — defines GGUF path, chat template, system prompt, parameters |
-| `ollama_test.py` | Ready-to-share test script for friends |
-| `streamlit_echo.py` | Full Streamlit UI with calendar and tool execution |
-| `interactive_agent_v47.py` | Command-line interactive agent (local fine-tuned model, no Ollama) |
-| `echo_logger.py` | Logging module for `streamlit_echo.py` |
-| `aws_finetune_v4_7.py` | AWS SageMaker fine-tuning script (V4.7) |
-| `aws_eval_v4_7.py` | Evaluation script for the fine-tuned model |
+| `aws_finetune_v4_6.py` | Training script for V4.6 (self-contained: generates its own dataset) |
+| `aws_finetune_v4_7.py` | Training script for V4.7 — surgical fix for Reschedule + Distractor |
+| `aws_eval_v4_7.py` | The 8-scenario benchmark that produces the 98% figure |
+| `Echo_finetune/prepare_ollama_v47.py` | Merges V4.6 + V4.7 LoRA adapters into Qwen3-4B, converts to GGUF, registers in Ollama |
+| `Echo_finetune/ollama_test.py` | Ready-to-share test script — talks to the published model, no GPU needed |
+| `Echo_finetune/streamlit_echo.py` | Full Streamlit UI with calendar and tool execution (local adapters) |
+| `Echo_finetune/interactive_agent_v47.py` | Command-line interactive agent (local adapters, no Ollama) |
+| `Echo_finetune/echo_logger.py` | Logging module for `streamlit_echo.py` |
+| `Echo_finetune/output/Modelfile_v4.7` | Ollama config — GGUF path, chat template, system prompt, parameters |
+| `Echo_finetune/output/echo-v4.7-merged/` | Full merged model, HuggingFace safetensors (~8 GB) — **gitignored** |
+| `Echo_finetune/output/echo_v4.7_q8.gguf` | GGUF model file (~4.3 GB, Q8_0), what Ollama loads — **gitignored** |
 
 ---
 
@@ -153,7 +158,7 @@ uv pip install transformers peft torch accelerate --python .venv/Scripts/python.
 
 ### Step 1 — Merge V4.6 + V4.7 Adapters into Base Model
 
-**File:** `prepare_ollama_v47.py`
+**File:** `Echo_finetune/prepare_ollama_v47.py`
 
 The fine-tuned model is saved as two stacked LoRA adapters. This step merges both into the base `Qwen3-4B` to produce a single standalone model.
 
@@ -164,7 +169,8 @@ Qwen/Qwen3-4B base
 ```
 
 ```bash
-.venv\Scripts\python.exe prepare_ollama_v47.py
+cd Echo_finetune
+python prepare_ollama_v47.py
 ```
 
 **Output:** `output/echo-v4.7-merged/` (~8 GB)
@@ -198,7 +204,7 @@ python llama.cpp/convert_hf_to_gguf.py output/echo-v4.7-merged \
 
 ### Step 3 — Write Modelfile
 
-**File:** `output/Modelfile_v4.7`
+**File:** `Echo_finetune/output/Modelfile_v4.7`
 
 The Modelfile configures Ollama with:
 - **`FROM`** — path to the GGUF file
@@ -207,7 +213,7 @@ The Modelfile configures Ollama with:
 - **`PARAMETER`** — temperature, top_p, stop tokens
 
 ```
-FROM output/echo_v4.7_q8.gguf
+FROM ./echo_v4.7_q8.gguf
 
 TEMPLATE """<|im_start|>system
 {{ .System }}<|im_end|>
@@ -234,7 +240,7 @@ PARAMETER stop "</tool_call>"
 ### Step 4 — Register with Local Ollama
 
 ```bash
-ollama create echo-v4.7 -f output/Modelfile_v4.7
+ollama create echo-v4.7 -f Echo_finetune/output/Modelfile_v4.7
 ```
 
 Verify registration:
@@ -273,7 +279,7 @@ OLLAMA_API_KEY="your_key_here" ollama push vasuverma/echo-v4.7
 
 ### Step 6 — Share `ollama_test.py`
 
-Send friends the `ollama_test.py` file. They only need:
+Send friends the `Echo_finetune/ollama_test.py` file. They only need:
 
 ```bash
 pip install ollama colorama
@@ -302,7 +308,7 @@ AWS SageMaker fine-tuning
               ▼
     output/echo_v4.7_q8.gguf                            (GGUF Q8_0, ~4.3 GB)
               │
-              │ ollama create echo-v4.7 -f output/Modelfile_v4.7
+              │ ollama create echo-v4.7 -f Echo_finetune/output/Modelfile_v4.7
               ▼
     Local Ollama  →  echo-v4.7
               │
@@ -312,7 +318,7 @@ AWS SageMaker fine-tuning
               │
               │ friends run:  ollama pull vasuverma/echo-v4.7
               ▼
-    Friends  →  python ollama_test.py  →  chat with Echo
+    Friends  →  python Echo_finetune/ollama_test.py  →  chat with Echo
 ```
 
 ---

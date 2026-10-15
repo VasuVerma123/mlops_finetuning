@@ -9,9 +9,10 @@ import json, re, os, time, gc, torch
 from peft import PeftModel
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-MODEL_NAME = "Qwen/Qwen3-4B"
-V46_ADAPTER = "/home/ssm-user/echo_v4_6_output/final_v4.6"
-V47_ADAPTER = "/home/ssm-user/echo_v4_7_output/final_v4.7"
+MODEL_NAME  = os.environ.get("ECHO_BASE_MODEL", "Qwen/Qwen3-4B")
+V46_ADAPTER = os.environ.get("ECHO_V46_ADAPTER", "/home/ssm-user/echo_v4_6_output/final_v4.6")
+V47_ADAPTER = os.environ.get("ECHO_V47_ADAPTER", "/home/ssm-user/echo_v4_7_output/final_v4.7")
+RESULTS_PATH = os.environ.get("ECHO_EVAL_RESULTS", "eval_v47_results.json")
 
 SYSTEM_PROMPT = (
     "You are Echo, personal scheduling assistant for Dr. Maya Chen, a Licensed Therapist. "
@@ -196,10 +197,12 @@ def main():
     else: print(f"\n  Below V4.6 by {90-accuracy:.0f}pp")
     print(f"\n{'='*70}")
 
-    with open("/home/ssm-user/eval_v47_results.json", "w") as f:
+    with open(RESULTS_PATH, "w") as f:
         json.dump({"accuracy": accuracy, "total_pass": total_pass, "total_checks": total_checks,
-                   "per_scenario": {k: {"passed":v["passed"],"total":v["total"],"response":v["response"]} for k,v in results.items()}}, f, indent=2)
-    print("  Saved to /home/ssm-user/eval_v47_results.json")
+                   "per_scenario": {k: {"passed":v["passed"],"total":v["total"],
+                                        "failed_checks": [c for c, ok in v["scores"].items() if not ok],
+                                        "response":v["response"]} for k,v in results.items()}}, f, indent=2)
+    print(f"  Saved to {RESULTS_PATH}")
 
 if __name__ == "__main__":
     main()

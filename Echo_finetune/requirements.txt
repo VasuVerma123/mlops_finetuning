@@ -1,0 +1,21 @@
+# Training, merging and local inference (needs a CUDA GPU)
+torch>=2.1.0
+transformers>=4.44.0
+datasets>=2.19.0
+peft>=0.12.0
+trl>=0.9.0
+bitsandbytes>=0.43.0
+accelerate>=0.33.0
+tensorboard>=2.17.0
+sentencepiece>=0.2.0
+protobuf>=4.25.0
+matplotlib>=3.8.0
+
+# streamlit_echo.py — web UI over the local adapters
+streamlit>=1.37.0
+
+# ollama_test.py — talks to the published model, no GPU needed.
+# These two are the ONLY requirements for that script:
+#     pip install ollama colorama
+ollama>=0.3.0
+colorama>=0.4.6
